@@ -1,9 +1,9 @@
 package main
 
 // autotest github.com/a8n [paths...] [packages...] [testflags]
-//  - update timers based on last success/failure; print message when state changes
 //  - skip modified files based on regexp
 //  - new module for log colorization
+//  - use StringArray
 
 import (
 	"fmt"
@@ -32,11 +32,26 @@ type watcher struct {
 	// TestFlags contains optional arguments for 'go test'.
 	TestFlags []string
 
-	debug bool
-	fs    *fsnotify.Watcher
-	done  chan bool
-	gosrc string
-	paths []string
+	debug       bool
+	fs          *fsnotify.Watcher
+	done        chan bool
+	gosrc       string
+	paths       []string
+	timeSuccess time.Time
+	timeFailure time.Time
+	lastState   int
+}
+
+// Values for lastState
+const (
+	starting = iota
+	working
+	failing
+)
+
+func round(duration, interval time.Duration) time.Duration {
+	var t int64 = int64(duration) + int64(interval)/2
+	return time.Duration(t - t%int64(interval))
 }
 
 func newWatcher() (*watcher, error) {
@@ -54,6 +69,7 @@ func newWatcher() (*watcher, error) {
 		done:       make(chan bool),
 		gosrc:      filepath.Join(os.Getenv("GOPATH"), "src"),
 		paths:      make([]string, 0),
+		lastState:  starting,
 	}
 	return self, nil
 }
@@ -119,7 +135,27 @@ func (self *watcher) AddRecursive(path string) error {
 // RunTests invokes the 'go test' tool for all monitored packages.
 func (self *watcher) RunTests() {
 	if err := self.handleModifications(); err != nil {
-		log.Println("\u001b[31m"+"error:", err, "\u001b[0m")
+		msg := "error: " + err.Error()
+		if self.lastState != failing {
+			self.timeFailure = time.Now()
+		}
+		if self.lastState == working {
+			msg += fmt.Sprintf(" (%s success)", round(time.Since(self.timeSuccess), time.Second))
+		}
+		self.lastState = failing
+		log.Println("\u001b[31m" + msg + "\u001b[0m")
+	} else {
+		msg := ""
+		if self.lastState != working {
+			self.timeSuccess = time.Now()
+		}
+		if self.lastState == failing {
+			msg = fmt.Sprintf("success after %s failures", round(time.Since(self.timeFailure), time.Second))
+		}
+		self.lastState = working
+		if len(msg) != 0 {
+			log.Println("\u001b[32m" + msg + "\u001b[0m")
+		}
 	}
 }
 
