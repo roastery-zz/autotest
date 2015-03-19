@@ -1,7 +1,6 @@
 package main
 
 // autotest github.com/a8n [paths...] [packages...] [testflags]
-//  - skip modified files based on regexp
 //  - new module for log colorization
 //  - use StringArray
 
@@ -28,6 +27,9 @@ type watcher struct {
 
 	// IgnoreDirs lists the names of directories that should not be watched for changes.
 	IgnoreDirs map[string]bool
+
+	// IgnoreFiles is a list of regular expression patterns for files that should be ignored.
+	IgnoreFiles []*regexp.Regexp
 
 	// TestFlags contains optional arguments for 'go test'.
 	TestFlags []string
@@ -63,13 +65,16 @@ func newWatcher() (*watcher, error) {
 		Finished:   make(chan bool),
 		SettleTime: 2 * time.Second,
 		IgnoreDirs: map[string]bool{".git": true},
-		TestFlags:  make([]string, 0),
-		debug:      false,
-		fs:         fs,
-		done:       make(chan bool),
-		gosrc:      filepath.Join(os.Getenv("GOPATH"), "src"),
-		paths:      make([]string, 0),
-		lastState:  starting,
+		IgnoreFiles: []*regexp.Regexp{
+			regexp.MustCompile(`\..*\.swp$`),
+		},
+		TestFlags: make([]string, 0),
+		debug:     false,
+		fs:        fs,
+		done:      make(chan bool),
+		gosrc:     filepath.Join(os.Getenv("GOPATH"), "src"),
+		paths:     make([]string, 0),
+		lastState: starting,
 	}
 	return self, nil
 }
@@ -215,10 +220,19 @@ func (self *watcher) handleEvent(event fsnotify.Event) (bool, error) {
 		modified = true
 	}
 	if event.Op&fsnotify.Write != 0 {
-		// TODO: match against a list?
-		if matched, _ := regexp.MatchString(`\..*\.swp`, filepath.Base(filename)); matched {
-			//log.Println("skipping:", filename)
-			// skip this file
+		// skip file if it matches any regexp in IgnoreFiles
+		skip := false
+		base := filepath.Base(filename)
+		for _, re := range self.IgnoreFiles {
+			if re.MatchString(base) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			if self.debug {
+				log.Println("skipping:", filename)
+			}
 		} else {
 			if self.debug {
 				log.Println("modified:", filename)
