@@ -3,6 +3,8 @@ package main
 // autotest github.com/a8n [paths...] [packages...] [testflags]
 //  - update timers based on last success/failure; print message when state changes
 //  - skip modified files based on regexp
+//  - run tests immediately when starting
+//  - new module for log colorization
 
 import (
 	"fmt"
@@ -31,10 +33,11 @@ type watcher struct {
 	// TestFlags contains optional arguments for 'go test'.
 	TestFlags []string
 
-	debug    bool
-	fs       *fsnotify.Watcher
-	done     chan bool
-	packages []string
+	debug bool
+	fs    *fsnotify.Watcher
+	done  chan bool
+	gosrc string
+	paths []string
 }
 
 func newWatcher() (*watcher, error) {
@@ -50,7 +53,8 @@ func newWatcher() (*watcher, error) {
 		debug:      false,
 		fs:         fs,
 		done:       make(chan bool),
-		packages:   make([]string, 0),
+		gosrc:      filepath.Join(os.Getenv("GOPATH"), "src"),
+		paths:      make([]string, 0),
 	}
 	return self, nil
 }
@@ -73,19 +77,28 @@ func (self *watcher) Add(path string) error {
 	if err != nil {
 		log.Fatal(err)
 	}
+	self.paths = append(self.paths, path)
 
 	// is it a package dir (under $GOPATH/src?)
-	gosrc := filepath.Join(os.Getenv("GOPATH"), "src")
-	pkg, err := filepath.Rel(gosrc, path)
-	if err == nil {
-		if self.debug {
-			log.Println("package:", pkg, "in path:", path)
-		}
-		self.packages = append(self.packages, pkg)
+	if pkg := self.getPackageName(path); pkg != "" && self.debug {
+		log.Println("package:", pkg, "in path:", path)
 	}
 
 	log.Println("watching for changes:", path)
 	return err
+}
+
+func (self *watcher) Remove(path string) error {
+	// find path in self.paths, remove the entry
+	for i, val := range self.paths {
+		if val == path {
+			// delete entry at position i
+			copy(self.paths[i:], self.paths[i+1:])
+			self.paths = self.paths[0 : len(self.paths)-1]
+			break
+		}
+	}
+	return self.fs.Remove(path)
 }
 
 // AddRecursive walks a directory recursively, and watches all subdirectories.
@@ -127,7 +140,7 @@ func (self *watcher) monitorChanges() {
 		case <-time.After(self.SettleTime):
 			if modified {
 				if err := self.handleModifications(); err != nil {
-					log.Println("error:", err)
+					log.Println("\u001b[31m"+"error:", err, "\u001b[0m")
 				}
 				modified = false
 			}
@@ -155,7 +168,7 @@ func (self *watcher) handleEvent(event fsnotify.Event) (bool, error) {
 		}
 	}
 	if event.Op&fsnotify.Remove != 0 {
-		self.fs.Remove(filename)
+		self.Remove(filename)
 		if self.debug {
 			log.Println("removed:", filename)
 		}
@@ -178,15 +191,29 @@ func (self *watcher) handleEvent(event fsnotify.Event) (bool, error) {
 
 // handleModifications launches 'go test'.
 func (self *watcher) handleModifications() error {
-	args := make([]string, 1+len(self.TestFlags)+len(self.packages))
+	args := make([]string, 1+len(self.TestFlags))
 	args[0] = "test"
 	copy(args[1:], self.TestFlags)
-	copy(args[1+len(self.TestFlags):], self.packages)
+	npkg := 0
+	for _, path := range self.paths {
+		if pkg := self.getPackageName(path); pkg != "" {
+			args = append(args, pkg)
+			npkg++
+		}
+	}
 	cmd := exec.Command("go", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	log.Printf("running go test with %d packages\n", len(self.packages))
+	log.Printf("running go test with %d packages\n", npkg)
 	return cmd.Run()
+}
+
+// getPackageName returns the go package name for a path, or "" if not a package dir.
+func (self *watcher) getPackageName(path string) string {
+	if pkg, err := filepath.Rel(self.gosrc, path); err == nil {
+		return pkg
+	}
+	return ""
 }
 
 // --------------------------------------------------------------------------
