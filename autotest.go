@@ -3,7 +3,6 @@ package main
 // autotest github.com/a8n [paths...] [packages...] [testflags]
 //  - update timers based on last success/failure; print message when state changes
 //  - skip modified files based on regexp
-//  - run tests immediately when starting
 //  - new module for log colorization
 
 import (
@@ -117,6 +116,13 @@ func (self *watcher) AddRecursive(path string) error {
 	})
 }
 
+// RunTests invokes the 'go test' tool for all monitored packages.
+func (self *watcher) RunTests() {
+	if err := self.handleModifications(); err != nil {
+		log.Println("\u001b[31m"+"error:", err, "\u001b[0m")
+	}
+}
+
 // monitorChanges is the main processing loop for file system notifications.
 func (self *watcher) monitorChanges() {
 	modified := false
@@ -139,9 +145,7 @@ func (self *watcher) monitorChanges() {
 
 		case <-time.After(self.SettleTime):
 			if modified {
-				if err := self.handleModifications(); err != nil {
-					log.Println("\u001b[31m"+"error:", err, "\u001b[0m")
-				}
+				self.RunTests()
 				modified = false
 			}
 		}
@@ -304,6 +308,7 @@ options:
 	}
 
 	w.Start()
+	w.RunTests()
 	<-w.Finished
 	w.Close()
 
