@@ -51,6 +51,9 @@ const (
 	failing
 )
 
+// Go's time package does not provide a method such as:
+//  func (d *Duration) Round(Duration)
+// So we implement it here.
 func round(duration, interval time.Duration) time.Duration {
 	var t int64 = int64(duration) + int64(interval)/2
 	return time.Duration(t - t%int64(interval))
