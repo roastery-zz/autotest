@@ -207,7 +207,9 @@ func (self *watcher) handleEvent(event fsnotify.Event) (bool, error) {
 			return false, err
 		}
 		if info.IsDir() {
-			self.Add(filename)
+			if err := self.Add(filename); err != nil {
+				return false, err
+			}
 		} else {
 			if self.debug {
 				log.Println("created:", filename)
@@ -216,7 +218,9 @@ func (self *watcher) handleEvent(event fsnotify.Event) (bool, error) {
 		}
 	}
 	if event.Op&fsnotify.Remove != 0 {
-		self.Remove(filename)
+		if err := self.Remove(filename); err != nil {
+			return false, err
+		}
 		if self.debug {
 			log.Println("removed:", filename)
 		}
@@ -363,7 +367,9 @@ options:
 	w.Start()
 	w.RunTests()
 	<-w.Finished
-	w.Close()
+	if err := w.Close(); err != nil {
+		log.Fatal(err)
+	}
 
 	log.Println("exiting")
 }
