@@ -1,6 +1,8 @@
+// Autotest watches source code directories for changes and automatically runs
+// ‘go test’; useful for continuous integration, test driven and behavior driven development workflows (CI, BDD, TDD)
 package main
 
-// autotest github.com/a8n [paths...] [packages...] [testflags]
+// autotest github.com/roastery/[paths...] [packages...] [testflags]
 //  - new module for log colorization
 //  - use StringArray (TestFlags, paths)
 
