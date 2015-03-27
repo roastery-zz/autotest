@@ -2,7 +2,7 @@ package main
 
 // autotest github.com/a8n [paths...] [packages...] [testflags]
 //  - new module for log colorization
-//  - use StringArray
+//  - use StringArray (TestFlags, paths)
 
 import (
 	"fmt"
@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -219,7 +220,10 @@ func (self *watcher) handleEvent(event fsnotify.Event) (bool, error) {
 	}
 	if event.Op&fsnotify.Remove != 0 {
 		if err := self.Remove(filename); err != nil {
-			return false, err
+			// "can't remove non-existent inotify watch" is OK
+			if !strings.HasPrefix(err.Error(), "can't remove non-existent inotify watch") {
+				return false, err
+			}
 		}
 		if self.debug {
 			log.Println("removed:", filename)
