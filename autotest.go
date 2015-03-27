@@ -205,6 +205,10 @@ func (self *watcher) handleEvent(event fsnotify.Event) (bool, error) {
 	if event.Op&fsnotify.Create != 0 {
 		info, err := os.Stat(filename)
 		if err != nil {
+			// ENOENT can occur here for temp files (already deleted)
+			if strings.HasSuffix(err.Error(), "no such file or directory") {
+				return false, nil
+			}
 			return false, err
 		}
 		if info.IsDir() {
