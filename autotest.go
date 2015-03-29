@@ -1,5 +1,6 @@
 // Autotest watches source code directories for changes and automatically runs
-// ‘go test’; useful for continuous integration, test driven and behavior driven development workflows (CI, BDD, TDD)
+// ‘go test’; useful for continuous integration, test driven and behavior
+// driven development workflows (CI, BDD, TDD)
 package main
 
 // autotest github.com/roastery/[paths...] [packages...] [testflags]
@@ -8,7 +9,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/go-fsnotify/fsnotify"
 	"go/build"
 	"log"
 	"os"
@@ -19,10 +19,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/go-fsnotify/fsnotify"
 )
 
-type watcher struct {
-	// Finished is signaled when the watcher is closed.
+type autotest struct {
+	// Finished is signaled when cleanup is complete.
 	Finished chan bool
 
 	// SettleTime indicates how long to wait after the last file system change before launching.
@@ -58,16 +60,16 @@ const (
 //  func (d *Duration) Round(Duration)
 // So we implement it here.
 func round(duration, interval time.Duration) time.Duration {
-	var t int64 = int64(duration) + int64(interval)/2
+	t := int64(duration) + int64(interval)/2
 	return time.Duration(t - t%int64(interval))
 }
 
-func newWatcher() (*watcher, error) {
+func newWatcher() (*autotest, error) {
 	fs, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
-	self := &watcher{
+	a := &autotest{
 		Finished:   make(chan bool),
 		SettleTime: 2 * time.Second,
 		IgnoreDirs: map[string]bool{".git": true},
@@ -82,31 +84,31 @@ func newWatcher() (*watcher, error) {
 		paths:     make([]string, 0),
 		lastState: starting,
 	}
-	return self, nil
+	return a, nil
 }
 
-func (self *watcher) Close() error {
-	return self.fs.Close()
+func (a *autotest) Close() error {
+	return a.fs.Close()
 }
 
-func (self *watcher) Start() {
-	go self.monitorChanges()
+func (a *autotest) Start() {
+	go a.monitorChanges()
 }
 
-func (self *watcher) Stop() {
-	self.done <- true
+func (a *autotest) Stop() {
+	a.done <- true
 }
 
-func (self *watcher) Add(path string) error {
+func (a *autotest) Add(path string) error {
 	// watch the file system path
-	err := self.fs.Add(path)
+	err := a.fs.Add(path)
 	if err != nil {
 		log.Fatal(err)
 	}
-	self.paths = append(self.paths, path)
+	a.paths = append(a.paths, path)
 
 	// is it a package dir (under $GOPATH/src?)
-	if pkg := self.getPackageName(path); pkg != "" && self.debug {
+	if pkg := a.getPackageName(path); pkg != "" && a.debug {
 		log.Println("package:", pkg, "in path:", path)
 	}
 
@@ -114,56 +116,56 @@ func (self *watcher) Add(path string) error {
 	return err
 }
 
-func (self *watcher) Remove(path string) error {
-	// find path in self.paths, remove the entry
-	for i, val := range self.paths {
+func (a *autotest) Remove(path string) error {
+	// find path in a.paths, remove the entry
+	for i, val := range a.paths {
 		if val == path {
 			// delete entry at position i
-			copy(self.paths[i:], self.paths[i+1:])
-			self.paths = self.paths[0 : len(self.paths)-1]
+			copy(a.paths[i:], a.paths[i+1:])
+			a.paths = a.paths[0 : len(a.paths)-1]
 			break
 		}
 	}
-	return self.fs.Remove(path)
+	return a.fs.Remove(path)
 }
 
 // AddRecursive walks a directory recursively, and watches all subdirectories.
-func (self *watcher) AddRecursive(path string) error {
+func (a *autotest) AddRecursive(path string) error {
 	return filepath.Walk(path, func(subpath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if _, ignore := self.IgnoreDirs[info.Name()]; ignore {
+		if _, ignore := a.IgnoreDirs[info.Name()]; ignore {
 			return filepath.SkipDir
 		}
 		if info.IsDir() {
-			return self.Add(subpath)
+			return a.Add(subpath)
 		}
 		return nil
 	})
 }
 
 // RunTests invokes the 'go test' tool for all monitored packages.
-func (self *watcher) RunTests() {
-	if err := self.handleModifications(); err != nil {
+func (a *autotest) RunTests() {
+	if err := a.handleModifications(); err != nil {
 		msg := "error: " + err.Error()
-		if self.lastState != failing {
-			self.timeFailure = time.Now()
+		if a.lastState != failing {
+			a.timeFailure = time.Now()
 		}
-		if self.lastState == working {
-			msg += fmt.Sprintf(" (%s success)", round(time.Since(self.timeSuccess), time.Second))
+		if a.lastState == working {
+			msg += fmt.Sprintf(" (%s success)", round(time.Since(a.timeSuccess), time.Second))
 		}
-		self.lastState = failing
+		a.lastState = failing
 		log.Println("\u001b[31m" + msg + "\u001b[0m")
 	} else {
 		msg := ""
-		if self.lastState != working {
-			self.timeSuccess = time.Now()
+		if a.lastState != working {
+			a.timeSuccess = time.Now()
 		}
-		if self.lastState == failing {
-			msg = fmt.Sprintf("success after %s failures", round(time.Since(self.timeFailure), time.Second))
+		if a.lastState == failing {
+			msg = fmt.Sprintf("success after %s failures", round(time.Since(a.timeFailure), time.Second))
 		}
-		self.lastState = working
+		a.lastState = working
 		if len(msg) != 0 {
 			log.Println("\u001b[32m" + msg + "\u001b[0m")
 		}
@@ -171,28 +173,28 @@ func (self *watcher) RunTests() {
 }
 
 // monitorChanges is the main processing loop for file system notifications.
-func (self *watcher) monitorChanges() {
+func (a *autotest) monitorChanges() {
 	modified := false
 	for {
 		select {
-		case <-self.done:
-			self.Finished <- true
+		case <-a.done:
+			a.Finished <- true
 			return
 
-		case err := <-self.fs.Errors:
+		case err := <-a.fs.Errors:
 			log.Println("error:", err)
 
-		case event := <-self.fs.Events:
-			mod, err := self.handleEvent(event)
+		case event := <-a.fs.Events:
+			mod, err := a.handleEvent(event)
 			if err != nil {
 				log.Println("error:", err)
 			} else if mod {
 				modified = true
 			}
 
-		case <-time.After(self.SettleTime):
+		case <-time.After(a.SettleTime):
 			if modified {
-				self.RunTests()
+				a.RunTests()
 				modified = false
 			}
 		}
@@ -200,7 +202,7 @@ func (self *watcher) monitorChanges() {
 }
 
 // handleEvent handles a file system change notification.
-func (self *watcher) handleEvent(event fsnotify.Event) (bool, error) {
+func (a *autotest) handleEvent(event fsnotify.Event) (bool, error) {
 	filename := event.Name
 	modified := false
 
@@ -214,24 +216,24 @@ func (self *watcher) handleEvent(event fsnotify.Event) (bool, error) {
 			return false, err
 		}
 		if info.IsDir() {
-			if err := self.Add(filename); err != nil {
+			if err := a.Add(filename); err != nil {
 				return false, err
 			}
 		} else {
-			if self.debug {
+			if a.debug {
 				log.Println("created:", filename)
 			}
 			modified = true
 		}
 	}
 	if event.Op&fsnotify.Remove != 0 {
-		if err := self.Remove(filename); err != nil {
+		if err := a.Remove(filename); err != nil {
 			// "can't remove non-existent inotify watch" is OK
 			if !strings.HasPrefix(err.Error(), "can't remove non-existent inotify watch") {
 				return false, err
 			}
 		}
-		if self.debug {
+		if a.debug {
 			log.Println("removed:", filename)
 		}
 		modified = true
@@ -240,18 +242,18 @@ func (self *watcher) handleEvent(event fsnotify.Event) (bool, error) {
 		// skip file if it matches any regexp in IgnoreFiles
 		skip := false
 		base := filepath.Base(filename)
-		for _, re := range self.IgnoreFiles {
+		for _, re := range a.IgnoreFiles {
 			if re.MatchString(base) {
 				skip = true
 				break
 			}
 		}
 		if skip {
-			if self.debug {
+			if a.debug {
 				log.Println("skipping:", filename)
 			}
 		} else {
-			if self.debug {
+			if a.debug {
 				log.Println("modified:", filename)
 			}
 			modified = true
@@ -261,13 +263,13 @@ func (self *watcher) handleEvent(event fsnotify.Event) (bool, error) {
 }
 
 // handleModifications launches 'go test'.
-func (self *watcher) handleModifications() error {
-	args := make([]string, 1+len(self.TestFlags))
+func (a *autotest) handleModifications() error {
+	args := make([]string, 1+len(a.TestFlags))
 	args[0] = "test"
-	copy(args[1:], self.TestFlags)
+	copy(args[1:], a.TestFlags)
 	npkg := 0
-	for _, path := range self.paths {
-		if pkg := self.getPackageName(path); pkg != "" {
+	for _, path := range a.paths {
+		if pkg := a.getPackageName(path); pkg != "" {
 			args = append(args, pkg)
 			npkg++
 		}
@@ -280,8 +282,8 @@ func (self *watcher) handleModifications() error {
 }
 
 // getPackageName returns the go package name for a path, or "" if not a package dir.
-func (self *watcher) getPackageName(path string) string {
-	if pkg, err := filepath.Rel(self.gosrc, path); err == nil {
+func (a *autotest) getPackageName(path string) string {
+	if pkg, err := filepath.Rel(a.gosrc, path); err == nil {
 		return pkg
 	}
 	return ""
